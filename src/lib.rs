@@ -32,7 +32,7 @@ extern "C" {
     type ShortUrlData;
 
     #[wasm_bindgen(static_method_of = ShortUrlData)]
-    fn get(key: &str, data_type: &str) -> Promise;
+    fn get(key: &str) -> Promise;
 
     #[wasm_bindgen(static_method_of = ShortUrlData)]
     fn put(key: &str, val: &str) -> Promise;
@@ -119,8 +119,24 @@ pub async fn handle(request: Request) -> Result<Response, JsValue> {
             "post" => new_short_url(request).await,
             _ => not_found(),
         },
-        _ => not_found(),
+        _ => match method.as_str() {
+            "get" => try_redirect(url.path()).await,
+            _ => not_found()
+        }
     };
+}
+
+async fn try_redirect(path: &str) -> Result<Response, JsValue> {
+    let short_url_id = path.trim_start_matches('/');
+
+    let entity_js_value = JsFuture::from(ShortUrlData::get(short_url_id)).await?;
+    let entity_str = entity_js_value.as_string().ok_or_else(|| not_found_err())?;
+
+    let entity = serde_json::from_str::<ShortUrlDataEntity>(&entity_str)
+        .map_err(|_| { not_found_err() })?;
+    let raw_url = entity.raw_url;
+
+    Response::redirect(&raw_url)
 }
 
 async fn new_short_url(request: Request) -> Result<Response, JsValue> {
@@ -178,7 +194,11 @@ fn to_json_str<T>(obj: T) -> String
 }
 
 fn not_found() -> Result<Response, JsValue> {
-    Err(gen_error("Not Found", 404, -2))
+    Err(not_found_err())
+}
+
+fn not_found_err() -> JsValue {
+    gen_error("Not Found", 404, -2)
 }
 
 fn gen_str_response(message: Option<&str>) -> Result<Response, JsValue> {
