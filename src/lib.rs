@@ -151,7 +151,10 @@ async fn new_short_url(request: Request) -> Result<Response, JsValue> {
     if target_url.cannot_be_a_base() {
         return Err(gen_error("target url syntax error", 400, 101));
     };
-    let short_url_id = gen_short_url();
+    let mut short_url_id = gen_short_url_id();
+    while check_exists(&short_url_id).await {
+        short_url_id = gen_short_url_id();
+    }
     let data = ShortUrlDataEntity {
         raw_url: raw_url.clone(),
         username: String::from(""),
@@ -171,9 +174,21 @@ async fn new_short_url(request: Request) -> Result<Response, JsValue> {
     gen_json_response(Some(&res_str))
 }
 
-fn gen_short_url() -> String {
+async fn check_exists(short_url_id: &str) -> bool {
+    let result = JsFuture::from(ShortUrlData::get(short_url_id)).await;
+    return match result {
+        Ok(value) => {
+            !value.is_null() && !value.is_undefined()
+        }
+        Err(_) => {
+            false
+        }
+    };
+}
+
+fn gen_short_url_id() -> String {
     let mut rng = rand::thread_rng();
-    let random_number: u64 = rng.gen_range(15_000_000, 500_000_000_000);
+    let random_number: u64 = rng.gen_range(15_000_000, 3_500_000_000_000);
     let id_str = base62::encode(random_number);
     id_str
 }
