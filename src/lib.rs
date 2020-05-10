@@ -8,12 +8,13 @@ extern crate web_sys;
 
 use cfg_if::cfg_if;
 use js_sys::Promise;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use url::Url;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Headers, Request, Response, ResponseInit};
-use rand::Rng;
+use mime_guess::{from_path, Mime};
 
 mod utils;
 
@@ -25,6 +26,20 @@ cfg_if! {
         #[global_allocator]
         static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
     }
+}
+
+#[wasm_bindgen]
+extern "C" {
+    type ShortUrlAssets;
+
+    #[wasm_bindgen(static_method_of = ShortUrlAssets)]
+    fn get(key: &str) -> Promise;
+
+    #[wasm_bindgen(static_method_of = ShortUrlAssets)]
+    fn put(key: &str, val: &str) -> Promise;
+
+    #[wasm_bindgen(static_method_of = ShortUrlAssets)]
+    fn delete(key: &str) -> Promise;
 }
 
 #[wasm_bindgen]
@@ -109,21 +124,32 @@ impl JsError {
 pub async fn handle(request: Request) -> Result<Response, JsValue> {
     let url = Url::parse(&request.url())
         .map_err(|e| { gen_error(&e.to_string(), 500, -1) })?;
-    let method = request.method().to_lowercase();
-    return match url.path() {
-        "/" => match method.as_str() {
-            "get" => gen_str_response(Some("Hello World")),
-            _ => not_found(),
-        },
+    let mut path_string = url.path().to_string();
+    if path_string.ends_with("/") {
+        path_string += "index.html";
+    }
+    let path = path_string.as_str();
+    let mime = from_path(path).first();
+    if let Some(mime) = mime {
+        return get_assert_data(path, mime).await;
+    };
+    let method: String = request.method().to_lowercase();
+    return match path {
         "/new" => match method.as_str() {
             "post" => new_short_url(request).await,
             _ => not_found(),
         },
         _ => match method.as_str() {
-            "get" => try_redirect(url.path()).await,
+            "get" => try_redirect(path).await,
             _ => not_found()
         }
     };
+}
+
+async fn get_assert_data(path: &str, mime: Mime) -> Result<Response, JsValue> {
+    let js_value = JsFuture::from(ShortUrlAssets::get(path)).await?;
+    let body_str = js_value.as_string().ok_or_else(|| not_found_err())?;
+    return gen_str_response_with_content_type(Some(&body_str), mime.essence_str());
 }
 
 async fn try_redirect(path: &str) -> Result<Response, JsValue> {
@@ -216,15 +242,15 @@ fn not_found_err() -> JsValue {
     gen_error("Not Found", 404, -2)
 }
 
-fn gen_str_response(message: Option<&str>) -> Result<Response, JsValue> {
-    let headers = Headers::new()?;
-    headers.append("Content-Type", "text/html")?;
-    gen_str_response_with_status(message, headers)
-}
-
 fn gen_json_response(message: Option<&str>) -> Result<Response, JsValue> {
     let headers = Headers::new()?;
     headers.append("Content-Type", "application/json")?;
+    gen_str_response_with_status(message, headers)
+}
+
+fn gen_str_response_with_content_type(message: Option<&str>, content_type: &str) -> Result<Response, JsValue> {
+    let headers = Headers::new()?;
+    headers.append("Content-Type", content_type)?;
     gen_str_response_with_status(message, headers)
 }
 
