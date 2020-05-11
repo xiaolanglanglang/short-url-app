@@ -8,14 +8,14 @@ extern crate web_sys;
 
 use cfg_if::cfg_if;
 use js_sys::Promise;
+use mime_guess::{from_path, Mime};
+use mime_guess::mime;
 use rand::Rng;
-use serde::{Deserialize, Serialize};
-use url::{Url};
+use serde::{de, Deserialize, Serialize};
+use url::Url;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Headers, Request, Response, ResponseInit};
-use mime_guess::{from_path, Mime};
-use mime_guess::mime;
 
 mod utils;
 
@@ -76,7 +76,7 @@ extern "C" {
     type ShortUrlUser;
 
     #[wasm_bindgen(static_method_of = ShortUrlUser)]
-    fn get(key: &str, data_type: &str) -> Promise;
+    fn get(key: &str) -> Promise;
 
     #[wasm_bindgen(static_method_of = ShortUrlUser)]
     fn put(key: &str, val: &str) -> Promise;
@@ -102,6 +102,12 @@ struct ShortUrlDataEntity {
     username: String,
     insert_time: u64,
     expire_time: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+struct UserEntity {
+    username: String,
+    api_key: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -181,11 +187,10 @@ async fn try_redirect(path: &str) -> Result<Response, JsValue> {
 }
 
 async fn new_short_url(request: Request) -> Result<Response, JsValue> {
-    let body = JsFuture::from(request.text()?).await?;
-    let body_str = body.as_string().ok_or_else(|| { JsValue::from_str("Not Found") })?;
-    let params = serde_json::from_str::<NewShortUrlRequest>(&body_str).map_err(
-        |e| { gen_error(&e.to_string(), 400, 100) })?;
+    let body_str = load_str(&request).await?;
+    let params: NewShortUrlRequest = from_json(&body_str)?;
 
+    let user = get_user(request.headers()).await?;
     let raw_url = params.url;
     let target_url = Url::parse(&raw_url)
         .map_err(|e| { gen_error(&e.to_string(), 400, 101) })?;
@@ -198,7 +203,7 @@ async fn new_short_url(request: Request) -> Result<Response, JsValue> {
     }
     let data = ShortUrlDataEntity {
         raw_url: raw_url.clone(),
-        username: String::from(""),
+        username: user.username,
         insert_time: js_sys::Date::now() as u64,
         expire_time: 0,
     };
@@ -213,6 +218,29 @@ async fn new_short_url(request: Request) -> Result<Response, JsValue> {
     let res = NewShortUrlResponse { short_url, raw_url };
     let res_str = to_json_str(res);
     gen_json_response(Some(&res_str))
+}
+
+async fn get_user(headers: Headers) -> Result<UserEntity, JsValue> {
+    let key_option: Option<String> = headers.get("X-AUTH-KEY")?;
+    let key = match key_option {
+        Some(val) => val,
+        None => return Err(gen_error("Need Auth", 401, 401))
+    };
+    let result = JsFuture::from(ShortUrlUser::get(&key)).await?;
+    let user_str = result.as_string().ok_or_else(|| gen_error("Need Auth", 401, 401))?;
+    from_json(&user_str)
+}
+
+fn from_json<'a, T: de::Deserialize<'a>>(body_str: &'a String) -> Result<T, JsValue> {
+    let params = serde_json::from_str::<T>(&body_str).map_err(
+        |e| { gen_error(&e.to_string(), 400, 100) })?;
+    Ok(params)
+}
+
+async fn load_str(request: &Request) -> Result<String, JsValue> {
+    let body = JsFuture::from(request.text()?).await?;
+    let body_str = body.as_string().ok_or_else(|| { JsValue::from_str("Not Found") })?;
+    Ok(body_str)
 }
 
 async fn check_exists(short_url_id: &str) -> bool {
