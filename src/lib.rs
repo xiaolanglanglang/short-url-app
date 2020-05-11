@@ -10,7 +10,7 @@ use cfg_if::cfg_if;
 use js_sys::Promise;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use url::Url;
+use url::{Url};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Headers, Request, Response, ResponseInit};
@@ -119,6 +119,20 @@ impl JsError {
             error_code,
         }
     }
+}
+
+#[wasm_bindgen]
+pub fn need_cache(url: &str) -> bool {
+    let url = match Url::parse(url) {
+        Ok(url) => { url }
+        Err(_) => { return false; }
+    };
+    let path = url.path();
+    let mime_option = from_path(path).first();
+    if let Some(mime) = mime_option {
+        return mime != mime::TEXT_HTML;
+    };
+    return false;
 }
 
 #[wasm_bindgen]
@@ -253,7 +267,7 @@ fn gen_str_response_with_content_type(message: Option<&str>, mime: Mime) -> Resu
     let headers = Headers::new()?;
     headers.append("Content-Type", mime.essence_str())?;
     if mime != mime::TEXT_HTML {
-        headers.append("Cache-Control","max-age=14400")?;
+        headers.append("Cache-Control", "max-age=14400")?;
     }
     gen_str_response_with_status(message, headers)
 }
