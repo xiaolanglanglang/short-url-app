@@ -15,6 +15,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Headers, Request, Response, ResponseInit};
 use mime_guess::{from_path, Mime};
+use mime_guess::mime;
 
 mod utils;
 
@@ -149,7 +150,7 @@ pub async fn handle(request: Request) -> Result<Response, JsValue> {
 async fn get_assert_data(path: &str, mime: Mime) -> Result<Response, JsValue> {
     let js_value = JsFuture::from(ShortUrlAssets::get(path)).await?;
     let body_str = js_value.as_string().ok_or_else(|| not_found_err())?;
-    return gen_str_response_with_content_type(Some(&body_str), mime.essence_str());
+    return gen_str_response_with_content_type(Some(&body_str), mime);
 }
 
 async fn try_redirect(path: &str) -> Result<Response, JsValue> {
@@ -248,9 +249,12 @@ fn gen_json_response(message: Option<&str>) -> Result<Response, JsValue> {
     gen_str_response_with_status(message, headers)
 }
 
-fn gen_str_response_with_content_type(message: Option<&str>, content_type: &str) -> Result<Response, JsValue> {
+fn gen_str_response_with_content_type(message: Option<&str>, mime: Mime) -> Result<Response, JsValue> {
     let headers = Headers::new()?;
-    headers.append("Content-Type", content_type)?;
+    headers.append("Content-Type", mime.essence_str())?;
+    if mime != mime::TEXT_HTML {
+        headers.append("Cache-Control","max-age=14400")?;
+    }
     gen_str_response_with_status(message, headers)
 }
 
