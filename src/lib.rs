@@ -59,20 +59,6 @@ extern "C" {
 
 #[wasm_bindgen]
 extern "C" {
-    type ShortUrlSetting;
-
-    #[wasm_bindgen(static_method_of = ShortUrlSetting)]
-    fn get(key: &str, data_type: &str) -> Promise;
-
-    #[wasm_bindgen(static_method_of = ShortUrlSetting)]
-    fn put(key: &str, val: &str) -> Promise;
-
-    #[wasm_bindgen(static_method_of = ShortUrlSetting)]
-    fn delete(key: &str) -> Promise;
-}
-
-#[wasm_bindgen]
-extern "C" {
     type ShortUrlUser;
 
     #[wasm_bindgen(static_method_of = ShortUrlUser)]
