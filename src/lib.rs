@@ -144,7 +144,7 @@ pub async fn handle(request: Request) -> Result<Response, JsValue> {
     return match path {
         "/new" => match method.as_str() {
             "post" => new_short_url(request).await,
-            _ => not_found(),
+            _ => method_not_allowed(),
         },
         _ => match method.as_str() {
             "get" => try_redirect(path).await,
@@ -269,6 +269,10 @@ fn not_found() -> Result<Response, JsValue> {
 
 fn not_found_err() -> JsValue {
     gen_error("Not Found", 404, -2)
+}
+
+fn method_not_allowed() -> Result<Response, JsValue> {
+    Err(gen_error("Method Not Allowed", 415, -3))
 }
 
 fn gen_json_response(message: Option<&str>) -> Result<Response, JsValue> {
