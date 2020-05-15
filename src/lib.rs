@@ -202,7 +202,7 @@ async fn new_short_url(request: Request) -> Result<Response, JsValue> {
             return Err(gen_error("Need Auth", 401, 401));
         }
     }
-    if expire_time_seconds < 60 {
+    if expire_time_seconds != 0 && expire_time_seconds < 60 {
         return Err(gen_error("The TTL must be greater than 60 seconds.", 400, 102));
     }
     let mut short_url_id = gen_short_url_id();
