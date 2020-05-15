@@ -32,7 +32,7 @@ async function handleRequest(event) {
                     headers: {"content-Type": "application/json"}
                 }
             )
-        } catch (e) {
+        } catch (_) {
             return new Response(e.stack || e.message || e || "unknown error", {
                 status: 500
             });
