@@ -53,6 +53,9 @@ extern "C" {
     #[wasm_bindgen(static_method_of = ShortUrlData)]
     fn put(key: &str, val: &str) -> Promise;
 
+    #[wasm_bindgen(static_method_of = ShortUrlData, js_name = put)]
+    fn put_with_ttl(key: &str, val: &str, ttl: &JsValue) -> Promise;
+
     #[wasm_bindgen(static_method_of = ShortUrlData)]
     fn delete(key: &str) -> Promise;
 }
@@ -72,8 +75,14 @@ extern "C" {
 }
 
 #[derive(Serialize, Deserialize)]
-struct NewShortUrlRequest {
-    url: String
+struct ExpireSetting {
+    pub expiration: u64
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct NewShortUrlRequest {
+    url: String,
+    ttl: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -173,28 +182,53 @@ async fn try_redirect(path: &str) -> Result<Response, JsValue> {
 }
 
 async fn new_short_url(request: Request) -> Result<Response, JsValue> {
+    let user_option = get_user(request.headers()).await?;
+
     let body_str = load_str(&request).await?;
     let params: NewShortUrlRequest = from_json(&body_str)?;
 
-    let user = get_user(request.headers()).await?;
     let raw_url = params.url;
     let target_url = Url::parse(&raw_url)
         .map_err(|e| { gen_error(&e.to_string(), 400, 101) })?;
     if target_url.cannot_be_a_base() {
         return Err(gen_error("target url syntax error", 400, 101));
     };
+    let expire_time_seconds = match params.ttl {
+        None => { 0 }
+        Some(ttl) => { ttl }
+    };
+    if expire_time_seconds == 0 || expire_time_seconds > 7 * 24 * 60 * 60 {
+        if user_option.is_none() {
+            return Err(gen_error("Need Auth", 401, 401));
+        }
+    }
+    if expire_time_seconds < 60 {
+        return Err(gen_error("The TTL must be greater than 60 seconds.", 400, 102));
+    }
     let mut short_url_id = gen_short_url_id();
     while check_exists(&short_url_id).await {
         short_url_id = gen_short_url_id();
     }
+    let expire_time = js_sys::Date::now() as u64 + expire_time_seconds * 1000;
+    let username = match user_option {
+        None => { "".to_string() }
+        Some(user) => { user.username.to_string() }
+    };
     let data = ShortUrlDataEntity {
         raw_url: raw_url.clone(),
-        username: user.username,
+        username,
         insert_time: js_sys::Date::now() as u64,
-        expire_time: 0,
+        expire_time,
     };
     let entity_str = to_json_str(data);
-    JsFuture::from(ShortUrlData::put(&short_url_id, &entity_str)).await?;
+    if expire_time_seconds == 0 {
+        JsFuture::from(ShortUrlData::put(&short_url_id, &entity_str)).await?;
+    } else {
+        let expiration = expire_time / 1000;
+        let expire_setting = ExpireSetting { expiration };
+        let value = js_value_from_json(&expire_setting)?;
+        JsFuture::from(ShortUrlData::put_with_ttl(&short_url_id, &entity_str, &value)).await?;
+    };
 
     let url = Url::parse(&request.url())
         .map_err(|e| { gen_error(&e.to_string(), 500, -1) })?;
@@ -206,15 +240,26 @@ async fn new_short_url(request: Request) -> Result<Response, JsValue> {
     gen_json_response(Some(&res_str))
 }
 
-async fn get_user(headers: Headers) -> Result<UserEntity, JsValue> {
+async fn get_user(headers: Headers) -> Result<Option<UserEntity>, JsValue> {
     let key_option: Option<String> = headers.get("X-AUTH-KEY")?;
     let key = match key_option {
         Some(val) => val,
-        None => return Err(gen_error("Need Auth", 401, 401))
+        None => return Ok(None)
     };
     let result = JsFuture::from(ShortUrlUser::get(&key)).await?;
-    let user_str = result.as_string().ok_or_else(|| gen_error("Need Auth", 401, 401))?;
-    from_json(&user_str)
+    let user_str_option = result.as_string();
+    return match user_str_option {
+        None => { Ok(None) }
+        Some(user_str) => {
+            let entity = from_json(&user_str)?;
+            Ok(Some(entity))
+        }
+    };
+}
+
+fn js_value_from_json<T: Serialize>(body: &T) -> Result<JsValue, JsValue> {
+    JsValue::from_serde(&body)
+        .map_err(|e| { gen_error(&e.to_string(), 500, -4) })
 }
 
 fn from_json<'a, T: de::Deserialize<'a>>(body_str: &'a String) -> Result<T, JsValue> {
