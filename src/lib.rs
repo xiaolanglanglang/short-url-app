@@ -197,7 +197,7 @@ async fn new_short_url(request: Request) -> Result<Response, JsValue> {
         None => { 0 }
         Some(ttl) => { ttl }
     };
-    if expire_time_seconds == 0 || expire_time_seconds > 7 * 24 * 60 * 60 {
+    if expire_time_seconds == 0 || expire_time_seconds > 30 * 24 * 60 * 60 {
         if user_option.is_none() {
             return Err(gen_error("Need Auth", 401, 401));
         }
