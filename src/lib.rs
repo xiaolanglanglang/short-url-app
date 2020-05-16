@@ -7,7 +7,6 @@ extern crate wasm_bindgen;
 extern crate web_sys;
 
 use cfg_if::cfg_if;
-use js_sys::Promise;
 use mime_guess::{from_path, Mime};
 use mime_guess::mime;
 use rand::Rng;
@@ -17,7 +16,12 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Headers, Request, Response, ResponseInit};
 
+use error::{JsError};
+use kv_store::{ShortUrlAssets, ShortUrlData, ShortUrlUser};
+
+mod kv_store;
 mod utils;
+mod error;
 
 cfg_if! {
     // When the `wee_alloc` feature is enabled, use `wee_alloc` as the global
@@ -29,50 +33,6 @@ cfg_if! {
     }
 }
 
-#[wasm_bindgen]
-extern "C" {
-    type ShortUrlAssets;
-
-    #[wasm_bindgen(static_method_of = ShortUrlAssets)]
-    fn get(key: &str) -> Promise;
-
-    #[wasm_bindgen(static_method_of = ShortUrlAssets)]
-    fn put(key: &str, val: &str) -> Promise;
-
-    #[wasm_bindgen(static_method_of = ShortUrlAssets)]
-    fn delete(key: &str) -> Promise;
-}
-
-#[wasm_bindgen]
-extern "C" {
-    type ShortUrlData;
-
-    #[wasm_bindgen(static_method_of = ShortUrlData)]
-    fn get(key: &str) -> Promise;
-
-    #[wasm_bindgen(static_method_of = ShortUrlData)]
-    fn put(key: &str, val: &str) -> Promise;
-
-    #[wasm_bindgen(static_method_of = ShortUrlData, js_name = put)]
-    fn put_with_ttl(key: &str, val: &str, ttl: &JsValue) -> Promise;
-
-    #[wasm_bindgen(static_method_of = ShortUrlData)]
-    fn delete(key: &str) -> Promise;
-}
-
-#[wasm_bindgen]
-extern "C" {
-    type ShortUrlUser;
-
-    #[wasm_bindgen(static_method_of = ShortUrlUser)]
-    fn get(key: &str) -> Promise;
-
-    #[wasm_bindgen(static_method_of = ShortUrlUser)]
-    fn put(key: &str, val: &str) -> Promise;
-
-    #[wasm_bindgen(static_method_of = ShortUrlUser)]
-    fn delete(key: &str) -> Promise;
-}
 
 #[derive(Serialize, Deserialize)]
 struct ExpireSetting {
@@ -103,23 +63,6 @@ struct ShortUrlDataEntity {
 struct UserEntity {
     username: String,
     api_key: String,
-}
-
-#[derive(Serialize, Deserialize)]
-struct JsError {
-    message: String,
-    status: u16,
-    error_code: i16,
-}
-
-impl JsError {
-    fn build(message: String, status: u16, error_code: i16) -> JsError {
-        JsError {
-            message,
-            status,
-            error_code,
-        }
-    }
 }
 
 #[wasm_bindgen]
