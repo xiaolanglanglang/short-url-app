@@ -10,18 +10,20 @@ use cfg_if::cfg_if;
 use mime_guess::{from_path, Mime};
 use mime_guess::mime;
 use rand::Rng;
-use serde::{de, Deserialize, Serialize};
 use url::Url;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Headers, Request, Response, ResponseInit};
 
-use error::{JsError};
 use kv_store::{ShortUrlAssets, ShortUrlData, ShortUrlUser};
+
+use crate::bean::{ExpireSetting, from_json, js_value_from_json, NewShortUrlRequest, NewShortUrlResponse, ShortUrlDataEntity, to_json_str, UserEntity};
+use crate::error::{gen_error, method_not_allowed, NEED_AUTH, not_found, not_found_err, server_error, TTL_ERROR, URL_ERROR};
 
 mod kv_store;
 mod utils;
 mod error;
+mod bean;
 
 cfg_if! {
     // When the `wee_alloc` feature is enabled, use `wee_alloc` as the global
@@ -34,36 +36,6 @@ cfg_if! {
 }
 
 
-#[derive(Serialize, Deserialize)]
-struct ExpireSetting {
-    pub expiration: u64
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct NewShortUrlRequest {
-    url: String,
-    ttl: Option<u64>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct NewShortUrlResponse {
-    short_url: String,
-    raw_url: String,
-}
-
-#[derive(Serialize, Deserialize)]
-struct ShortUrlDataEntity {
-    raw_url: String,
-    username: String,
-    insert_time: u64,
-    expire_time: u64,
-}
-
-#[derive(Serialize, Deserialize)]
-struct UserEntity {
-    username: String,
-    api_key: String,
-}
 
 #[wasm_bindgen]
 pub fn need_cache(url: &str) -> bool {
@@ -82,7 +54,7 @@ pub fn need_cache(url: &str) -> bool {
 #[wasm_bindgen]
 pub async fn handle(request: Request) -> Result<Response, JsValue> {
     let url = Url::parse(&request.url())
-        .map_err(|e| { gen_error(&e.to_string(), 500, -1) })?;
+        .map_err(|e| { server_error(&e) })?;
     let mut path_string = url.path().to_string();
     if path_string.ends_with("/") {
         path_string += "index.html";
@@ -132,9 +104,9 @@ async fn new_short_url(request: Request) -> Result<Response, JsValue> {
 
     let raw_url = params.url;
     let target_url = Url::parse(&raw_url)
-        .map_err(|e| { gen_error(&e.to_string(), 400, 101) })?;
+        .map_err(|e| { gen_error(&e.to_string(), 400, URL_ERROR) })?;
     if target_url.cannot_be_a_base() {
-        return Err(gen_error("target url syntax error", 400, 101));
+        return Err(gen_error("target url syntax error", 400, URL_ERROR));
     };
     let expire_time_seconds = match params.ttl {
         None => { 0 }
@@ -142,11 +114,11 @@ async fn new_short_url(request: Request) -> Result<Response, JsValue> {
     };
     if expire_time_seconds == 0 || expire_time_seconds > 30 * 24 * 60 * 60 {
         if user_option.is_none() {
-            return Err(gen_error("Need Auth", 401, 401));
+            return Err(gen_error("Need Auth", 401, NEED_AUTH));
         }
     }
     if expire_time_seconds != 0 && expire_time_seconds < 60 {
-        return Err(gen_error("The TTL must be greater than 60 seconds.", 400, 102));
+        return Err(gen_error("The TTL must be greater than 60 seconds.", 400, TTL_ERROR));
     }
     let mut short_url_id = gen_short_url_id();
     while check_exists(&short_url_id).await {
@@ -173,8 +145,7 @@ async fn new_short_url(request: Request) -> Result<Response, JsValue> {
         JsFuture::from(ShortUrlData::put_with_ttl(&short_url_id, &entity_str, &value)).await?;
     };
 
-    let url = Url::parse(&request.url())
-        .map_err(|e| { gen_error(&e.to_string(), 500, -1) })?;
+    let url = Url::parse(&request.url()).map_err(|e| { server_error(&e) })?;
     let host = url.host_str().unwrap_or_else(|| { "" });
     let short_url = format!("{}/{}", host, short_url_id);
 
@@ -200,17 +171,6 @@ async fn get_user(headers: Headers) -> Result<Option<UserEntity>, JsValue> {
     };
 }
 
-fn js_value_from_json<T: Serialize>(body: &T) -> Result<JsValue, JsValue> {
-    JsValue::from_serde(&body)
-        .map_err(|e| { gen_error(&e.to_string(), 500, -4) })
-}
-
-fn from_json<'a, T: de::Deserialize<'a>>(body_str: &'a String) -> Result<T, JsValue> {
-    let params = serde_json::from_str::<T>(&body_str).map_err(
-        |e| { gen_error(&e.to_string(), 400, 100) })?;
-    Ok(params)
-}
-
 async fn load_str(request: &Request) -> Result<String, JsValue> {
     let body = JsFuture::from(request.text()?).await?;
     let body_str = body.as_string().ok_or_else(|| { JsValue::from_str("Not Found") })?;
@@ -234,33 +194,6 @@ fn gen_short_url_id() -> String {
     let random_number: u64 = rng.gen_range(15_000_000, 3_500_000_000_000);
     let id_str = base62::encode(random_number);
     id_str
-}
-
-fn gen_error(message: &str, status: u16, error_code: i16) -> JsValue {
-    let js_error = JsError::build(message.to_owned(), status, error_code);
-    let err_str = to_json_str(&js_error);
-    JsValue::from_str(&err_str)
-}
-
-fn to_json_str<T>(obj: T) -> String
-    where T: Serialize {
-    let err_str = match serde_json::to_string(&obj) {
-        Ok(str) => { str }
-        Err(err) => { err.to_string() }
-    };
-    err_str
-}
-
-fn not_found() -> Result<Response, JsValue> {
-    Err(not_found_err())
-}
-
-fn not_found_err() -> JsValue {
-    gen_error("Not Found", 404, -2)
-}
-
-fn method_not_allowed() -> Result<Response, JsValue> {
-    Err(gen_error("Method Not Allowed", 415, -3))
 }
 
 fn gen_json_response(message: Option<&str>) -> Result<Response, JsValue> {
