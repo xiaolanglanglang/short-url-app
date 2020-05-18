@@ -24,6 +24,7 @@ mod kv_store;
 mod utils;
 mod error;
 mod bean;
+mod setting;
 
 cfg_if! {
     // When the `wee_alloc` feature is enabled, use `wee_alloc` as the global
@@ -112,7 +113,7 @@ async fn new_short_url(request: Request) -> Result<Response, JsValue> {
         None => { 0 }
         Some(ttl) => { ttl }
     };
-    if expire_time_seconds == 0 || expire_time_seconds > 30 * 24 * 60 * 60 {
+    if expire_time_seconds == 0 || expire_time_seconds > setting::GUEST_MAX_TTL {
         if user_option.is_none() {
             return Err(gen_error("Need Auth", 401, NEED_AUTH));
         }
@@ -191,7 +192,7 @@ async fn check_exists(short_url_id: &str) -> bool {
 
 fn gen_short_url_id() -> String {
     let mut rng = rand::thread_rng();
-    let random_number: u64 = rng.gen_range(15_000_000, 3_500_000_000_000);
+    let random_number: u64 = rng.gen_range(setting::SHORT_ID_MIN, setting::SHORT_ID_MAX);
     let id_str = base62::encode(random_number);
     id_str
 }
@@ -206,7 +207,7 @@ fn gen_str_response_with_content_type(message: Option<&str>, mime: Mime) -> Resu
     let headers = Headers::new()?;
     headers.append("Content-Type", mime.essence_str())?;
     if mime != mime::TEXT_HTML {
-        headers.append("Cache-Control", "max-age=14400")?;
+        headers.append("Cache-Control", setting::CACHE_AGE_VALUE)?;
     }
     gen_str_response_with_status(message, headers)
 }
